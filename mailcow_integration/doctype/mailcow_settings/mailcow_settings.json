@@ -1,0 +1,52 @@
+{
+  "doctype": "DocType",
+  "name": "Mailcow Settings",
+  "module": "mailcow_integration",
+  "issingle": 1,
+  "editable_grid": 0,
+  "track_changes": 1,
+  "field_order": [
+    "api_url",
+    "api_key",
+    "mail_domain",
+    "default_quota_mb"
+  ],
+  "fields": [
+    {
+      "fieldname": "api_url",
+      "label": "Mailcow API URL",
+      "fieldtype": "Data",
+      "reqd": 1
+    },
+    {
+      "fieldname": "api_key",
+      "label": "Mailcow API Key",
+      "fieldtype": "Password",
+      "reqd": 1
+    },
+    {
+      "fieldname": "mail_domain",
+      "label": "Mail Domain",
+      "fieldtype": "Data",
+      "reqd": 1
+    },
+    {
+      "fieldname": "default_quota_mb",
+      "label": "Default Quota (MB)",
+      "fieldtype": "Int",
+      "default": "1024"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "submit": 0,
+      "cancel": 0,
+      "amend": 0
+    }
+  ]
+}
