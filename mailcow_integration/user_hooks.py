@@ -69,7 +69,8 @@ def create_mailcow_mailbox(doc, method):
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "X-API-Key": mailcow_api_key
+        "X-API-Key": mailcow_api_key,
+        "User-Agent": "curl/7.68.0"  # Mimic curl to avoid User-Agent blocking
     }
 
     try:
@@ -178,7 +179,8 @@ def test_mailcow_connection():
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "X-API-Key": settings.api_key
+            "X-API-Key": settings.api_key,
+            "User-Agent": "curl/7.68.0"  # Mimic curl to avoid User-Agent blocking
         }
         
         # Test API connection by getting mailbox list
@@ -447,5 +449,45 @@ def test_different_approaches():
             
         return results
         
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def test_with_curl_user_agent():
+    """
+    Test connection with curl User-Agent to fix the blocking issue
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_with_curl_user_agent")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        if not (settings.api_url and settings.api_key):
+            return {"error": "Settings missing"}
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": settings.api_key,
+            "User-Agent": "curl/7.68.0"  # Mimic curl to avoid blocking
+        }
+        
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
+        
+        r = requests.get(test_url, headers=headers, timeout=10)
+        
+        if r.status_code == 200:
+            return {
+                "success": True,
+                "message": "✅ SUCCESS! Fixed User-Agent blocking issue",
+                "status_code": r.status_code,
+                "response_preview": str(r.json())[:300] + "..." if len(str(r.json())) > 300 else str(r.json())
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Still failing with status {r.status_code}",
+                "response": r.text[:200]
+            }
+            
     except Exception as e:
         return {"error": str(e)}
