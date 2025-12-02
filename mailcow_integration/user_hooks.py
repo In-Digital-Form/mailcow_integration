@@ -318,3 +318,134 @@ def fix_api_url_trailing_slash():
             
     except Exception as e:
         return {"error": str(e)}
+
+
+def debug_request_details():
+    """
+    Debug the exact request being sent vs working curl
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.debug_request_details")
+    """
+    try:
+        import urllib3
+        
+        # Enable detailed logging
+        urllib3.disable_warnings()
+        
+        settings = get_mailcow_settings()
+        
+        if not (settings.api_url and settings.api_key):
+            return {"error": "Settings missing"}
+        
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": settings.api_key
+        }
+        
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
+        
+        # Create session for detailed debugging
+        session = requests.Session()
+        
+        # Prepare the request
+        req = requests.Request('GET', test_url, headers=headers)
+        prepared = session.prepare_request(req)
+        
+        # Send and capture details
+        response = session.send(prepared, timeout=10)
+        
+        return {
+            "request_details": {
+                "method": prepared.method,
+                "url": prepared.url,
+                "headers": dict(prepared.headers),
+                "body": prepared.body
+            },
+            "response_details": {
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "text": response.text[:500] if response.text else None
+            },
+            "api_key_info": {
+                "length": len(settings.api_key),
+                "first_4": settings.api_key[:4] if settings.api_key else None,
+                "last_4": settings.api_key[-4:] if settings.api_key else None
+            }
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": frappe.get_traceback()}
+
+
+def test_different_approaches():
+    """
+    Test different ways to make the request
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_different_approaches")
+    """
+    try:
+        settings = get_mailcow_settings()
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
+        results = {}
+        
+        # Approach 1: Original way
+        try:
+            headers1 = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-API-Key": settings.api_key
+            }
+            r1 = requests.get(test_url, headers=headers1, timeout=10)
+            results["approach_1_original"] = {
+                "status": r1.status_code,
+                "response": r1.text[:200]
+            }
+        except Exception as e:
+            results["approach_1_original"] = {"error": str(e)}
+        
+        # Approach 2: Minimal headers (like your curl)
+        try:
+            headers2 = {
+                "Content-Type": "application/json",
+                "X-API-Key": settings.api_key
+            }
+            r2 = requests.get(test_url, headers=headers2, timeout=10)
+            results["approach_2_minimal"] = {
+                "status": r2.status_code,
+                "response": r2.text[:200]
+            }
+        except Exception as e:
+            results["approach_2_minimal"] = {"error": str(e)}
+            
+        # Approach 3: Even more minimal (just API key)
+        try:
+            headers3 = {
+                "X-API-Key": settings.api_key
+            }
+            r3 = requests.get(test_url, headers=headers3, timeout=10)
+            results["approach_3_api_key_only"] = {
+                "status": r3.status_code,
+                "response": r3.text[:200]
+            }
+        except Exception as e:
+            results["approach_3_api_key_only"] = {"error": str(e)}
+            
+        # Approach 4: Using requests with verify=False (in case SSL issue)
+        try:
+            headers4 = {
+                "Content-Type": "application/json",
+                "X-API-Key": settings.api_key
+            }
+            r4 = requests.get(test_url, headers=headers4, timeout=10, verify=False)
+            results["approach_4_no_ssl_verify"] = {
+                "status": r4.status_code,
+                "response": r4.text[:200]
+            }
+        except Exception as e:
+            results["approach_4_no_ssl_verify"] = {"error": str(e)}
+            
+        return results
+        
+    except Exception as e:
+        return {"error": str(e)}
