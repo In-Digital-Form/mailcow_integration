@@ -284,3 +284,39 @@ def generate_curl_command():
         
     except Exception as e:
         return {"error": str(e)}
+
+
+def fix_api_url_trailing_slash():
+    """
+    Fix the API URL by removing trailing slash
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.fix_api_url_trailing_slash")
+    """
+    try:
+        settings = frappe.get_single("Mailcow Settings")
+        
+        if settings.api_url:
+            original_url = settings.api_url
+            # Remove trailing slash
+            cleaned_url = settings.api_url.rstrip('/')
+            
+            if original_url != cleaned_url:
+                settings.api_url = cleaned_url
+                settings.save()
+                return {
+                    "success": True,
+                    "message": f"API URL updated from '{original_url}' to '{cleaned_url}'"
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": "API URL is already clean (no trailing slash)"
+                }
+        else:
+            return {
+                "success": False,
+                "message": "No API URL set"
+            }
+            
+    except Exception as e:
+        return {"error": str(e)}

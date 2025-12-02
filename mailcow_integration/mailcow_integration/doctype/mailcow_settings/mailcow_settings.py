@@ -16,9 +16,17 @@ class MailcowSettings(Document):
 			if not self.mail_domain:
 				frappe.throw("Mail Domain is required when Mailcow Integration is enabled")
 			
-			# Ensure API URL ends with /
-			if not self.api_url.endswith('/'):
-				self.api_url += '/'
+		# Always clean up API URL - remove trailing slashes
+		if self.api_url:
+			self.api_url = self.api_url.rstrip('/')
+			
+			# Validate URL format
+			if not self.api_url.startswith(('http://', 'https://')):
+				frappe.throw("API URL must start with http:// or https://")
+				
+		# Clean up mail domain - remove @ if present
+		if self.mail_domain:
+			self.mail_domain = self.mail_domain.lstrip('@').strip()
 	
 	def on_update(self):
 		"""Clear cache when settings are updated"""

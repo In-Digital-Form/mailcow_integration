@@ -24,7 +24,8 @@
       "fieldname": "api_url",
       "label": "Mailcow API URL",
       "fieldtype": "Data",
-      "reqd": 1
+      "reqd": 1,
+      "description": "Enter your Mailcow server URL (e.g., https://mail.yourdomain.com) without trailing slash"
     },
     {
       "fieldname": "api_key",
@@ -36,7 +37,8 @@
       "fieldname": "mail_domain",
       "label": "Mail Domain",
       "fieldtype": "Data",
-      "reqd": 1
+      "reqd": 1,
+      "description": "Domain for new email addresses (e.g., yourcompany.com)"
     },
     {
       "fieldname": "default_quota_mb",
