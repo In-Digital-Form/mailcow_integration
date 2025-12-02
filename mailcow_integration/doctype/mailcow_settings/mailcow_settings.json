@@ -6,12 +6,20 @@
   "editable_grid": 0,
   "track_changes": 1,
   "field_order": [
+    "enabled",
     "api_url",
     "api_key",
     "mail_domain",
-    "default_quota_mb"
+    "default_quota_mb",
+    "auto_create_email_account"
   ],
   "fields": [
+    {
+      "fieldname": "enabled",
+      "label": "Enable Mailcow Integration",
+      "fieldtype": "Check",
+      "default": "1"
+    },
     {
       "fieldname": "api_url",
       "label": "Mailcow API URL",
@@ -35,6 +43,12 @@
       "label": "Default Quota (MB)",
       "fieldtype": "Int",
       "default": "1024"
+    },
+    {
+      "fieldname": "auto_create_email_account",
+      "label": "Auto-create Email Account for User",
+      "fieldtype": "Check",
+      "default": "1"
     }
   ],
   "permissions": [
