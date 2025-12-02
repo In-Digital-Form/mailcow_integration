@@ -1,1 +1,1 @@
-Mailcow Integration
+mailcow_integration

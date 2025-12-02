@@ -1,0 +1,1 @@
+# Doctype module for Mailcow Integration

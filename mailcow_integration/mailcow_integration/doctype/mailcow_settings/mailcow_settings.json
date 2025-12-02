@@ -1,7 +1,7 @@
 {
   "doctype": "DocType",
   "name": "Mailcow Settings",
-  "module": "Mailcow Integration",
+  "module": "mailcow_integration",
   "issingle": 1,
   "editable_grid": 0,
   "track_changes": 1,
