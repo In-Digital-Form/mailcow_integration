@@ -1,6 +1,12 @@
 import frappe
 import requests
 
+
+def get_mailcow_settings():
+    """Get Mailcow settings from the doctype"""
+    settings = frappe.get_single("Mailcow Settings")
+    return settings
+
 def create_mailcow_mailbox(doc, method):
     """
     Called after a new ERPNext User is inserted.
@@ -11,7 +17,7 @@ def create_mailcow_mailbox(doc, method):
     if doc.user_type != "System User":
         return
 
-    # Basic config  you may store these in Site Config or a doctype
+    # Basic config from Mailcow Settings doctype
     enabled = frappe.db.get_single_value("Mailcow Settings", "enabled") or 0
     if not int(enabled):
         # Integration is globally disabled
@@ -23,33 +29,39 @@ def create_mailcow_mailbox(doc, method):
     default_quota_mb = frappe.db.get_single_value("Mailcow Settings", "default_quota_mb") or 1024
 
     if not (mailcow_api_url and mailcow_api_key and mail_domain):
-        frappe.log_error("Mailcow settings missing", "Mailcow Integration")
+        frappe.log_error("Mailcow settings missing: API URL, API Key, or Mail Domain", "Mailcow Integration")
         return
 
-    # Derive local_part from the user email
-    # Assumes doc.email is like "user@yourdomain.com"
-    if "@" in doc.email:
-        local_part, domain_from_mail = doc.email.split("@", 1)
-        # Optionally override domain
-        domain = mail_domain or domain_from_mail
+    # Create email address based on user's name/email and configured domain
+    if doc.email and "@" in doc.email:
+        # If user already has an email, use the local part with our domain
+        local_part = doc.email.split("@")[0]
     else:
-        # If no @, fallback  but you might want to abort instead
-        local_part = doc.name
-        domain = mail_domain
+        # Create local part from username (remove any existing domain)
+        local_part = doc.name.split("@")[0] if "@" in doc.name else doc.name
+    
+    # Always use the configured mail domain
+    domain = mail_domain
+    email_address = f"{local_part}@{domain}"
+
+    # Check if mailbox already exists to avoid duplicates
+    existing_email_account = frappe.db.exists("Email Account", {"email_id": email_address})
+    if existing_email_account:
+        frappe.log_error(f"Email account {email_address} already exists, skipping mailbox creation", "Mailcow Integration")
+        return
 
     display_name = doc.full_name or doc.first_name or local_part
 
-    # Use one password consistently for Mailcow and the Email Account
-    mailbox_password = doc.new_password or frappe.generate_hash()
-    email_address = f"{local_part}@{domain}"
+    # Generate a secure password for the mailbox
+    mailbox_password = frappe.generate_hash()[:12]  # Use first 12 chars for a reasonable password
 
     payload = {
         "local_part": local_part,
         "domain": domain,
         "name": display_name,
-        "quota": int(default_quota_mb) * 1024,  # Mailcow expects quota in MB or KiB depending on version/config
+        "quota": int(default_quota_mb),  # Mailcow API expects quota in MB
         "active": "1",
-        "password": mailbox_password,  # You may want a separate mail password policy
+        "password": mailbox_password,
         "password2": mailbox_password,
         "force_pw_update": "0"
     }
@@ -68,71 +80,108 @@ def create_mailcow_mailbox(doc, method):
             timeout=10
         )
         r.raise_for_status()
-    except requests.RequestException:
-        frappe.log_error(frappe.get_traceback(), "Mailcow mailbox creation failed")
+        response_data = r.json()
+        
+        # Check if Mailcow API returned success
+        if response_data and not response_data.get('success', True):
+            error_msg = response_data.get('msg', 'Unknown error')
+            frappe.log_error(f"Mailcow API error: {error_msg}", "Mailcow mailbox creation failed")
+            return
+            
+    except requests.RequestException as e:
+        frappe.log_error(f"Request failed: {str(e)}\n{frappe.get_traceback()}", "Mailcow mailbox creation failed")
+        return
+    except Exception as e:
+        frappe.log_error(f"Unexpected error: {str(e)}\n{frappe.get_traceback()}", "Mailcow mailbox creation failed")
         return
 
-    # Create / link an Email Account in Frappe for this mailbox
+    # Create Email Account in Frappe for this mailbox
     auto_create_email_account = (
         frappe.db.get_single_value("Mailcow Settings", "auto_create_email_account") or 0
     )
 
     if int(auto_create_email_account):
         try:
-            # Reuse an existing Email Account if one already exists for this address
-            existing_email_account_name = frappe.db.exists(
-                "Email Account", {"email_id": email_address}
+            # Create the Email Account
+            email_account = frappe.get_doc(
+                {
+                    "doctype": "Email Account",
+                    "email_id": email_address,
+                    "email_account_name": f"{display_name} ({email_address})",
+                    "enable_incoming": 1,
+                    "enable_outgoing": 1,
+                    "default_incoming": 0,
+                    "default_outgoing": 0,
+                    "awaiting_password": 0,
+                    "password": mailbox_password,
+                    # Add IMAP/SMTP settings for Mailcow
+                    "use_imap": 1,
+                    "use_smtp": 1,
+                    "email_server": mailcow_api_url.replace('https://', '').replace('http://', '').rstrip('/'),
+                    "smtp_server": mailcow_api_url.replace('https://', '').replace('http://', '').rstrip('/'),
+                    "smtp_port": 587,
+                    "use_tls": 1,
+                    "imap_folder": "INBOX"
+                }
             )
-            if existing_email_account_name:
-                email_account = frappe.get_doc(
-                    "Email Account", existing_email_account_name
-                )
-            else:
-                # Try to link an existing Email Domain (named by domain_name)
-                email_domain_name = None
-                if domain:
-                    if frappe.db.exists("Email Domain", domain):
-                        email_domain_name = domain
-                    else:
-                        email_domain_name = frappe.db.get_value(
-                            "Email Domain", {"domain_name": domain}, "name"
-                        )
 
-                email_account = frappe.get_doc(
-                    {
-                        "doctype": "Email Account",
-                        "email_id": email_address,
-                        "email_account_name": display_name or email_address,
-                        "enable_incoming": 1,
-                        "enable_outgoing": 1,
-                        "default_incoming": 0,
-                        "default_outgoing": 0,
-                        "awaiting_password": 0,
-                        "password": mailbox_password,
-                    }
-                )
+            email_account.insert(ignore_permissions=True)
 
-                if email_domain_name:
-                    email_account.domain = email_domain_name
-
-                email_account.insert(ignore_permissions=True)
-
-            # Attach this Email Account to the User (User.user_emails child table)
+            # Update the user's email field to the new email address
+            doc.db_set("email", email_address, update_modified=False)
+            
+            # Attach this Email Account to the User via user_emails child table
             user = frappe.get_doc("User", doc.name)
-            already_linked = any(
-                ue.email_account == email_account.name
-                for ue in (user.user_emails or [])
-            )
-            if not already_linked:
-                user.append("user_emails", {"email_account": email_account.name})
-                user.save(ignore_permissions=True)
-        except Exception:
+            user.append("user_emails", {"email_account": email_account.name})
+            user.save(ignore_permissions=True)
+            
+        except Exception as e:
             frappe.log_error(
-                frappe.get_traceback(), "Mailcow Email Account assignment failed"
+                f"Email Account creation failed: {str(e)}\n{frappe.get_traceback()}", 
+                "Mailcow Email Account assignment failed"
             )
 
-    # Optionally log success or store metadata on the User
-    frappe.log_error(
-        f"Mailbox created for {email_address}",
-        "Mailcow Integration",
-    )  # use log_error for quick debug, or a real log
+    # Log success
+    frappe.msgprint(f"Successfully created mailbox and email account for {email_address}")
+    frappe.logger().info(f"Mailbox created for {email_address}")
+    
+    # Optionally store metadata on the User for future reference
+    user_doc = frappe.get_doc("User", doc.name)
+    user_doc.add_comment("Info", f"Mailcow mailbox created: {email_address}")
+
+
+def test_mailcow_connection():
+    """
+    Test function to verify Mailcow API connection
+    Can be called from bench console: 
+    frappe.call("mailcow_integration.user_hooks.test_mailcow_connection")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        if not settings.enabled:
+            return {"success": False, "message": "Mailcow Integration is disabled"}
+        
+        if not (settings.api_url and settings.api_key):
+            return {"success": False, "message": "API URL or API Key missing"}
+        
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json", 
+            "X-API-Key": settings.api_key
+        }
+        
+        # Test API connection by getting mailbox list
+        r = requests.get(
+            f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all",
+            headers=headers,
+            timeout=10
+        )
+        
+        if r.status_code == 200:
+            return {"success": True, "message": "Connection successful", "data": r.json()}
+        else:
+            return {"success": False, "message": f"API returned status {r.status_code}: {r.text}"}
+            
+    except Exception as e:
+        return {"success": False, "message": f"Connection failed: {str(e)}"}
