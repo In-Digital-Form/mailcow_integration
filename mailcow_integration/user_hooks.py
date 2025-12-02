@@ -136,101 +136,81 @@ def create_mailcow_mailbox(doc, method):
             user.append("user_emails", {"email_account": email_account.name})
             user.save(ignore_permissions=True)
             
-        except Exception as e:
-            frappe.log_error(
-                f"Email Account creation failed: {str(e)}\n{frappe.get_traceback()}", 
-                "Mailcow Email Account assignment failed"
-            )
-
-    # Log success
-    frappe.msgprint(f"Successfully created mailbox and email account for {email_address}")
-    frappe.logger().info(f"Mailbox created for {email_address}")
-    
-    # Optionally store metadata on the User for future reference
-    user_doc = frappe.get_doc("User", doc.name)
-    user_doc.add_comment("Info", f"Mailcow mailbox created: {email_address}")
+    except Exception as e:
+        return {"error": str(e)}
 
 
-def test_mailcow_connection():
+def test_exact_curl_replication():
     """
-    Test function to verify Mailcow API connection
-    Can be called from bench console: 
-    frappe.call("mailcow_integration.user_hooks.test_mailcow_connection")
+    Test with exactly the same headers as your working curl command
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_exact_curl_replication")
     """
     try:
         settings = get_mailcow_settings()
         
-        if not settings.enabled:
-            return {"success": False, "message": "Mailcow Integration is disabled"}
+        if not (settings.api_url and settings.api_key):
+            return {"error": "Settings missing"}
         
-        if not settings.api_url:
-            return {"success": False, "message": "API URL missing"}
-            
-        if not settings.api_key:
-            return {"success": False, "message": "API Key missing"}
-        
-        # Debug info
-        debug_info = {
-            "api_url": settings.api_url,
-            "api_key_length": len(settings.api_key) if settings.api_key else 0,
-            "api_key_preview": f"{settings.api_key[:8]}..." if settings.api_key and len(settings.api_key) > 8 else "Too short"
-        }
-        
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-API-Key": settings.api_key,
-            "User-Agent": "curl/7.68.0"  # Mimic curl to avoid User-Agent blocking
-        }
-        
-        # Test API connection by getting mailbox list
         test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
         
-        r = requests.get(
-            test_url,
-            headers=headers,
-            timeout=10
-        )
+        # Test 1: Exact minimal headers like your working curl
+        headers_minimal = {
+            "Content-Type": "application/json",
+            "X-API-Key": settings.api_key
+        }
         
-        if r.status_code == 200:
-            return {
-                "success": True, 
-                "message": "Connection successful", 
-                "debug": debug_info,
-                "response_preview": str(r.json())[:200] + "..." if len(str(r.json())) > 200 else str(r.json())
+        # Create a session and disable auto-headers
+        session = requests.Session()
+        
+        # Remove default headers that requests adds
+        session.headers.clear()
+        
+        try:
+            r1 = session.get(test_url, headers=headers_minimal, timeout=10)
+            result1 = {
+                "status": r1.status_code,
+                "response": r1.text[:200] if r1.text else None,
+                "headers_sent": dict(session.prepare_request(requests.Request('GET', test_url, headers=headers_minimal)).headers)
             }
-        else:
-            return {
-                "success": False, 
-                "message": f"API returned status {r.status_code}: {r.text}",
-                "debug": debug_info,
-                "test_url": test_url,
-                "headers_sent": {k: v for k, v in headers.items() if k != "X-API-Key"}
+        except Exception as e:
+            result1 = {"error": str(e)}
+        
+        # Test 2: Try with exactly your curl headers order
+        headers_curl_order = {}
+        headers_curl_order["Content-Type"] = "application/json"
+        headers_curl_order["X-API-Key"] = settings.api_key
+        
+        try:
+            r2 = requests.get(test_url, headers=headers_curl_order, timeout=10)
+            result2 = {
+                "status": r2.status_code,
+                "response": r2.text[:200] if r2.text else None
             }
+        except Exception as e:
+            result2 = {"error": str(e)}
             
-    except Exception as e:
-        return {"success": False, "message": f"Connection failed: {str(e)}"}
-
-
-def debug_mailcow_settings():
-    """
-    Debug function to check current Mailcow settings
-    Can be called from bench console:
-    frappe.call("mailcow_integration.user_hooks.debug_mailcow_settings")
-    """
-    try:
-        settings = get_mailcow_settings()
+        # Test 3: Try with requests.Session and custom adapter
+        try:
+            from requests.adapters import HTTPAdapter
+            session3 = requests.Session()
+            session3.mount('https://', HTTPAdapter())
+            
+            r3 = session3.get(test_url, headers=headers_minimal, timeout=10)
+            result3 = {
+                "status": r3.status_code,
+                "response": r3.text[:200] if r3.text else None
+            }
+        except Exception as e:
+            result3 = {"error": str(e)}
         
         return {
-            "enabled": settings.enabled,
-            "api_url": settings.api_url,
-            "api_key_set": bool(settings.api_key),
-            "api_key_length": len(settings.api_key) if settings.api_key else 0,
-            "api_key_preview": f"{settings.api_key[:8]}..." if settings.api_key and len(settings.api_key) > 8 else settings.api_key,
-            "mail_domain": settings.mail_domain,
-            "default_quota_mb": settings.default_quota_mb,
-            "auto_create_email_account": settings.auto_create_email_account
+            "test_1_minimal_headers_clean_session": result1,
+            "test_2_curl_header_order": result2,
+            "test_3_custom_adapter": result3,
+            "working_curl_command": f'curl --header "Content-Type: application/json" --header "X-API-Key: {settings.api_key}" {test_url}'
         }
+        
     except Exception as e:
         return {"error": str(e)}
 
@@ -489,5 +469,48 @@ def test_with_curl_user_agent():
                 "response": r.text[:200]
             }
             
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def test_minimal_headers():
+    """
+    Test with only the exact headers from working curl
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_minimal_headers")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        if not (settings.api_url and settings.api_key):
+            return {"error": "Settings missing"}
+        
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
+        
+        # Try to prevent requests from adding extra headers
+        session = requests.Session()
+        
+        # Explicitly override problematic auto-headers
+        headers_override = {
+            "Content-Type": "application/json", 
+            "X-API-Key": settings.api_key,
+            "Accept": "*/*",  # Simpler accept header like curl
+            "Accept-Encoding": "",  # Disable compression
+            "Connection": "close",  # Disable keep-alive
+            "User-Agent": ""  # Empty user agent
+        }
+        
+        r = session.get(test_url, headers=headers_override, timeout=10)
+        
+        # Get the actual headers that were sent
+        prepared_request = session.prepare_request(requests.Request('GET', test_url, headers=headers_override))
+        
+        return {
+            "status_code": r.status_code,
+            "response": r.text[:300] if r.text else None,
+            "headers_actually_sent": dict(prepared_request.headers),
+            "success": r.status_code == 200
+        }
+        
     except Exception as e:
         return {"error": str(e)}
