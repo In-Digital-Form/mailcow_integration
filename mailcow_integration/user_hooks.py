@@ -162,26 +162,125 @@ def test_mailcow_connection():
         if not settings.enabled:
             return {"success": False, "message": "Mailcow Integration is disabled"}
         
-        if not (settings.api_url and settings.api_key):
-            return {"success": False, "message": "API URL or API Key missing"}
+        if not settings.api_url:
+            return {"success": False, "message": "API URL missing"}
+            
+        if not settings.api_key:
+            return {"success": False, "message": "API Key missing"}
+        
+        # Debug info
+        debug_info = {
+            "api_url": settings.api_url,
+            "api_key_length": len(settings.api_key) if settings.api_key else 0,
+            "api_key_preview": f"{settings.api_key[:8]}..." if settings.api_key and len(settings.api_key) > 8 else "Too short"
+        }
         
         headers = {
             "Accept": "application/json",
-            "Content-Type": "application/json", 
             "X-API-Key": settings.api_key
         }
         
         # Test API connection by getting mailbox list
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all"
+        
         r = requests.get(
-            f"{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all",
+            test_url,
             headers=headers,
             timeout=10
         )
         
         if r.status_code == 200:
-            return {"success": True, "message": "Connection successful", "data": r.json()}
+            return {
+                "success": True, 
+                "message": "Connection successful", 
+                "debug": debug_info,
+                "response_preview": str(r.json())[:200] + "..." if len(str(r.json())) > 200 else str(r.json())
+            }
         else:
-            return {"success": False, "message": f"API returned status {r.status_code}: {r.text}"}
+            return {
+                "success": False, 
+                "message": f"API returned status {r.status_code}: {r.text}",
+                "debug": debug_info,
+                "test_url": test_url,
+                "headers_sent": {k: v for k, v in headers.items() if k != "X-API-Key"}
+            }
             
     except Exception as e:
         return {"success": False, "message": f"Connection failed: {str(e)}"}
+
+
+def debug_mailcow_settings():
+    """
+    Debug function to check current Mailcow settings
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.debug_mailcow_settings")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        return {
+            "enabled": settings.enabled,
+            "api_url": settings.api_url,
+            "api_key_set": bool(settings.api_key),
+            "api_key_length": len(settings.api_key) if settings.api_key else 0,
+            "api_key_preview": f"{settings.api_key[:8]}..." if settings.api_key and len(settings.api_key) > 8 else settings.api_key,
+            "mail_domain": settings.mail_domain,
+            "default_quota_mb": settings.default_quota_mb,
+            "auto_create_email_account": settings.auto_create_email_account
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def test_basic_mailcow_api():
+    """
+    Test basic Mailcow API without authentication first
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_basic_mailcow_api")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        if not settings.api_url:
+            return {"success": False, "message": "API URL missing"}
+        
+        # Test basic connectivity without authentication
+        test_url = f"{settings.api_url.rstrip('/')}/api/v1/get/status/version"
+        
+        r = requests.get(test_url, timeout=10)
+        
+        return {
+            "success": r.status_code < 400,
+            "status_code": r.status_code,
+            "response": r.text[:500],
+            "url_tested": test_url
+        }
+        
+    except Exception as e:
+        return {"success": False, "message": f"Connection failed: {str(e)}"}
+
+
+def generate_curl_command():
+    """
+    Generate a curl command for manual testing
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.generate_curl_command")
+    """
+    try:
+        settings = get_mailcow_settings()
+        
+        if not (settings.api_url and settings.api_key):
+            return {"error": "API URL or API Key missing"}
+        
+        curl_command = f"""curl -X GET "{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all" \\
+-H "Accept: application/json" \\
+-H "X-API-Key: {settings.api_key}" \\
+-v"""
+
+        return {
+            "curl_command": curl_command,
+            "instructions": "Run this curl command in your terminal to test authentication manually"
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
