@@ -177,6 +177,7 @@ def test_mailcow_connection():
         
         headers = {
             "Accept": "application/json",
+            "Content-Type": "application/json",
             "X-API-Key": settings.api_key
         }
         
@@ -272,10 +273,7 @@ def generate_curl_command():
         if not (settings.api_url and settings.api_key):
             return {"error": "API URL or API Key missing"}
         
-        curl_command = f"""curl -X GET "{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all" \\
--H "Accept: application/json" \\
--H "X-API-Key: {settings.api_key}" \\
--v"""
+        curl_command = f"""curl --header "Content-Type: application/json" --header "X-API-Key: {settings.api_key}" "{settings.api_url.rstrip('/')}/api/v1/get/mailbox/all\""""
 
         return {
             "curl_command": curl_command,
