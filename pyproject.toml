@@ -1,9 +1,9 @@
 [project]
-name = "erpnext_idf_api"
+name = "mailcow_integration"
 authors = [
     { name = "In Digital Form GmbH", email = "guenther.eder@indigitalform.com"}
 ]
-description = "Erpnext Idf Api"
+description = "Mailcow Integration"
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]
