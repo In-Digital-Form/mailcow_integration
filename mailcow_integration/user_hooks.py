@@ -136,8 +136,19 @@ def create_mailcow_mailbox(doc, method):
             user.append("user_emails", {"email_account": email_account.name})
             user.save(ignore_permissions=True)
             
-    except Exception as e:
-        return {"error": str(e)}
+        except Exception as e:
+            frappe.log_error(
+                f"Email Account creation failed: {str(e)}\n{frappe.get_traceback()}", 
+                "Mailcow Email Account assignment failed"
+            )
+
+    # Log success
+    frappe.msgprint(f"Successfully created mailbox and email account for {email_address}")
+    frappe.logger().info(f"Mailbox created for {email_address}")
+    
+    # Optionally store metadata on the User for future reference
+    user_doc = frappe.get_doc("User", doc.name)
+    user_doc.add_comment("Info", f"Mailcow mailbox created: {email_address}")
 
 
 def test_exact_curl_replication():
