@@ -1,10 +1,13 @@
 import frappe
 import requests
+from frappe.utils.password import get_decrypted_password
 
 
 def get_mailcow_settings():
-    """Get Mailcow settings from the doctype"""
+    """Get Mailcow settings from the doctype with decrypted API key"""
     settings = frappe.get_single("Mailcow Settings")
+    # Get the decrypted API key
+    settings.api_key = get_decrypted_password("Mailcow Settings", "Mailcow Settings", "api_key")
     return settings
 
 def create_mailcow_mailbox(doc, method):
@@ -24,7 +27,7 @@ def create_mailcow_mailbox(doc, method):
         return
 
     mailcow_api_url = frappe.db.get_single_value("Mailcow Settings", "api_url")
-    mailcow_api_key = frappe.db.get_single_value("Mailcow Settings", "api_key")
+    mailcow_api_key = get_decrypted_password("Mailcow Settings", "Mailcow Settings", "api_key")
     mail_domain = frappe.db.get_single_value("Mailcow Settings", "mail_domain")
     default_quota_mb = frappe.db.get_single_value("Mailcow Settings", "default_quota_mb") or 1024
 
@@ -66,34 +69,25 @@ def create_mailcow_mailbox(doc, method):
         "force_pw_update": "0"
     }
 
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-API-Key": mailcow_api_key,
-        "User-Agent": "curl/7.68.0"  # Mimic curl to avoid User-Agent blocking
-    }
-
-    try:
-        r = requests.post(
-            f"{mailcow_api_url.rstrip('/')}/api/v1/add/mailbox",
-            json=payload,
-            headers=headers,
-            timeout=10
-        )
-        r.raise_for_status()
-        response_data = r.json()
-        
-        # Check if Mailcow API returned success
-        if response_data and not response_data.get('success', True):
-            error_msg = response_data.get('msg', 'Unknown error')
-            frappe.log_error(f"Mailcow API error: {error_msg}", "Mailcow mailbox creation failed")
-            return
-            
-    except requests.RequestException as e:
-        frappe.log_error(f"Request failed: {str(e)}\n{frappe.get_traceback()}", "Mailcow mailbox creation failed")
+    # Use curl subprocess since that's what works reliably
+    curl_result = create_mailbox_via_curl(local_part, domain, display_name, default_quota_mb, mailbox_password)
+    
+    if not curl_result["success"]:
+        frappe.log_error(f"Mailcow mailbox creation failed: {curl_result.get('error', 'Unknown error')}", "Mailcow Integration")
         return
-    except Exception as e:
-        frappe.log_error(f"Unexpected error: {str(e)}\n{frappe.get_traceback()}", "Mailcow mailbox creation failed")
+    
+    # Check API response
+    response_data = curl_result.get("response", {})
+    if isinstance(response_data, str):
+        try:
+            import json
+            response_data = json.loads(response_data)
+        except:
+            pass
+    
+    if isinstance(response_data, dict) and not response_data.get('success', True):
+        error_msg = response_data.get('msg', 'Unknown error')
+        frappe.log_error(f"Mailcow API error: {error_msg}", "Mailcow mailbox creation failed")
         return
 
     # Create Email Account in Frappe for this mailbox
@@ -525,3 +519,110 @@ def test_minimal_headers():
         
     except Exception as e:
         return {"error": str(e)}
+
+
+def test_mailcow_connection():
+    """
+    Test Mailcow connection using subprocess curl (the method that works)
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_mailcow_connection")
+    """
+    try:
+        import subprocess
+        settings = get_mailcow_settings()
+        
+        if not settings.enabled:
+            return {"success": False, "message": "Mailcow Integration is disabled"}
+        
+        if not (settings.api_url and settings.api_key):
+            return {"success": False, "message": "API URL or API Key missing"}
+        
+        # Use subprocess curl since that's what actually works
+        result = subprocess.run([
+            'curl', '-s',
+            '--header', 'Content-Type: application/json',
+            '--header', f'X-API-Key: {settings.api_key}',
+            f'{settings.api_url.rstrip("/")}/api/v1/get/mailbox/all'
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            try:
+                import json
+                response_data = json.loads(result.stdout)
+                return {
+                    "success": True,
+                    "message": "✅ Connection successful!",
+                    "mailbox_count": len(response_data) if isinstance(response_data, list) else "Unknown",
+                    "response_preview": str(response_data)[:300] + "..." if len(str(response_data)) > 300 else str(response_data)
+                }
+            except json.JSONDecodeError:
+                if "authentication failed" in result.stdout:
+                    return {
+                        "success": False, 
+                        "message": "❌ Authentication failed - check API key",
+                        "response": result.stdout
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "message": "✅ Connection successful!",
+                        "response": result.stdout[:300]
+                    }
+        else:
+            return {
+                "success": False,
+                "message": f"❌ Curl command failed (exit code: {result.returncode})",
+                "error": result.stderr,
+                "response": result.stdout
+            }
+            
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "❌ Request timed out"}
+    except Exception as e:
+        return {"success": False, "message": f"❌ Error: {str(e)}"}
+
+
+def create_mailbox_via_curl(local_part, domain, display_name, quota_mb, password):
+    """
+    Create mailbox using curl subprocess (the reliable method)
+    """
+    try:
+        import subprocess
+        import json
+        
+        settings = get_mailcow_settings()
+        
+        payload = {
+            "local_part": local_part,
+            "domain": domain,
+            "name": display_name,
+            "quota": int(quota_mb),
+            "active": "1",
+            "password": password,
+            "password2": password,
+            "force_pw_update": "0"
+        }
+        
+        # Use curl for the POST request
+        result = subprocess.run([
+            'curl', '-s', '-X', 'POST',
+            '--header', 'Content-Type: application/json',
+            '--header', f'X-API-Key: {settings.api_key}',
+            '--data', json.dumps(payload),
+            f'{settings.api_url.rstrip("/")}/api/v1/add/mailbox'
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            try:
+                response_data = json.loads(result.stdout)
+                return {"success": True, "response": response_data}
+            except json.JSONDecodeError:
+                if "authentication failed" in result.stdout:
+                    return {"success": False, "error": "Authentication failed", "response": result.stdout}
+                else:
+                    return {"success": True, "response": result.stdout}
+        else:
+            return {"success": False, "error": f"Curl failed (exit code: {result.returncode})", "stderr": result.stderr}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
