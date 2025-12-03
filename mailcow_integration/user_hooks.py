@@ -626,3 +626,165 @@ def create_mailbox_via_curl(local_part, domain, display_name, quota_mb, password
             
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def debug_hook_setup():
+    """
+    Debug function to check if hooks are properly loaded
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.debug_hook_setup")
+    """
+    try:
+        # Check if the app is installed
+        apps = frappe.get_installed_apps()
+        
+        # Check hooks
+        hooks_info = {
+            "app_installed": "mailcow_integration" in apps,
+            "installed_apps": apps,
+        }
+        
+        # Try to get hook configuration
+        try:
+            import mailcow_integration.hooks as app_hooks
+            hooks_info["doc_events"] = getattr(app_hooks, "doc_events", "Not found")
+        except Exception as e:
+            hooks_info["hook_import_error"] = str(e)
+        
+        return hooks_info
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def test_hook_manually():
+    """
+    Test the hook function manually with a dummy user
+    Can be called from bench console:
+    frappe.call("mailcow_integration.user_hooks.test_hook_manually")
+    """
+    try:
+        # Create a test user object-like structure
+        class TestUser:
+            def __init__(self):
+                self.user_type = "System User"
+                self.name = "test.user.hook"
+                self.email = "test.hook@example.com"
+                self.full_name = "Test Hook User"
+                self.first_name = "Test"
+                
+            def db_set(self, field, value, update_modified=False):
+                frappe.msgprint(f"Would set {field} = {value}")
+        
+        test_user = TestUser()
+        
+        # Test the hook function directly
+        result = create_mailcow_mailbox(test_user, "after_insert")
+        
+        return {
+            "success": True,
+            "message": "Hook function executed manually",
+            "result": result
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": frappe.get_traceback()}
+
+
+def disable_mailcow_mailbox(doc, method):
+    """
+    Called before a User is deleted.
+    Disables the corresponding mailbox on Mailcow instead of deleting it.
+    """
+    # Only process System Users
+    if doc.user_type != "System User":
+        return
+
+    # Check if integration is enabled
+    enabled = frappe.db.get_single_value("Mailcow Settings", "enabled") or 0
+    if not int(enabled):
+        return
+
+    if not doc.email or "@" not in doc.email:
+        return
+
+    try:
+        settings = get_mailcow_settings()
+        
+        if not (settings.api_url and settings.api_key):
+            frappe.log_error("Mailcow settings missing for user deletion", "Mailcow Integration")
+            return
+
+        # Disable the mailbox instead of deleting it
+        result = disable_mailbox_via_curl(doc.email)
+        
+        if result["success"]:
+            frappe.msgprint(f"Mailbox {doc.email} has been disabled in Mailcow")
+            frappe.logger().info(f"Disabled Mailcow mailbox for user {doc.name}: {doc.email}")
+            
+            # Add comment to user before deletion
+            try:
+                doc.add_comment("Info", f"Mailcow mailbox {doc.email} disabled before user deletion")
+            except:
+                pass  # Comment might fail if user is being hard-deleted
+        else:
+            frappe.log_error(f"Failed to disable Mailcow mailbox {doc.email}: {result.get('error')}", "Mailcow Integration")
+            
+    except Exception as e:
+        frappe.log_error(f"Error disabling Mailcow mailbox for {doc.name}: {str(e)}\n{frappe.get_traceback()}", "Mailcow Integration")
+
+
+def disable_mailbox_via_curl(email_address):
+    """
+    Disable a mailbox using curl subprocess
+    """
+    try:
+        import subprocess
+        import json
+        
+        settings = get_mailcow_settings()
+        
+        # Get mailbox info first
+        result = subprocess.run([
+            'curl', '-s',
+            '--header', 'Content-Type: application/json',
+            '--header', f'X-API-Key: {settings.api_key}',
+            f'{settings.api_url.rstrip("/")}/api/v1/get/mailbox/{email_address}'
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode != 0:
+            return {"success": False, "error": f"Failed to get mailbox info: {result.stderr}"}
+        
+        try:
+            mailbox_info = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"success": False, "error": f"Invalid response when getting mailbox info: {result.stdout}"}
+        
+        # Update mailbox to set active=0
+        update_payload = {
+            "items": [email_address],
+            "attr": {
+                "active": "0"
+            }
+        }
+        
+        # Disable the mailbox
+        result = subprocess.run([
+            'curl', '-s', '-X', 'POST',
+            '--header', 'Content-Type: application/json',
+            '--header', f'X-API-Key: {settings.api_key}',
+            '--data', json.dumps(update_payload),
+            f'{settings.api_url.rstrip("/")}/api/v1/edit/mailbox'
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            try:
+                response_data = json.loads(result.stdout)
+                return {"success": True, "response": response_data}
+            except json.JSONDecodeError:
+                return {"success": True, "response": result.stdout}
+        else:
+            return {"success": False, "error": f"Curl failed (exit code: {result.returncode})", "stderr": result.stderr}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
