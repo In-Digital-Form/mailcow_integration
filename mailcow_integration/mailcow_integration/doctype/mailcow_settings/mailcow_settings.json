@@ -11,7 +11,8 @@
     "api_key",
     "mail_domain",
     "default_quota_mb",
-    "auto_create_email_account"
+    "auto_create_email_account",
+    "disable_mailbox_on_user_delete"
   ],
   "fields": [
     {
@@ -51,6 +52,13 @@
       "label": "Auto-create Email Account for User",
       "fieldtype": "Check",
       "default": "1"
+    },
+    {
+      "fieldname": "disable_mailbox_on_user_delete",
+      "label": "Disable Mailbox on User Deletion",
+      "fieldtype": "Check",
+      "default": "1",
+      "description": "If unchecked, mailboxes will remain active when the ERPNext user is deleted"
     }
   ],
   "permissions": [

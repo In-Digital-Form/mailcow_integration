@@ -705,6 +705,15 @@ def disable_mailcow_mailbox(doc, method):
     if not int(enabled):
         return
 
+    # Check if user disabling on delete is enabled
+    disable_on_delete = frappe.db.get_single_value("Mailcow Settings", "disable_mailbox_on_user_delete")
+    # Default to 1 (True) if not set, for backward compatibility or safety
+    if disable_on_delete is None:
+        disable_on_delete = 1
+        
+    if not int(disable_on_delete):
+        return
+
     if not doc.email or "@" not in doc.email:
         return
 
